@@ -112,7 +112,7 @@ float VEML3328::GetValue(Channel Param)
 	#endif
 	if(State) return -9999.0; //If I2C error, return error condition
 	else { //Otherwise calculate and return value 
-		Val = GetValueRaw(Param)*(1.0/float(VEML_GainValsDG[VEML_GainIndexDG]))*(0.5/pow(2, VEML_GainVals[VEML_GainIndex]))*(1.0/float(VEML_IntTimes[VEML_IntIndex]))*float(1.0 + 3.0*VEML_SenseGain)*(1.0/IrradianceConversion[static_cast<int>(Param)]); //Normalize to base value and multiply by gain
+		Val = Val*(1.0/float(VEML_GainValsDG[VEML_GainIndexDG]))*(0.5/pow(2, VEML_GainVals[VEML_GainIndex]))*(1.0/float(VEML_IntTimes[VEML_IntIndex]))*float(1.0 + 3.0*VEML_SenseGain)*(1.0/IrradianceConversion[static_cast<int>(Param)]); //Normalize to base value and multiply by gain
 		return Val; //Return resultant value
 	}
 }
@@ -128,7 +128,7 @@ float VEML3328::GetValue(Channel Param, bool &State)
 	#endif
 	if(State) return -9999.0; //If I2C error, return error condition
 	else { //Otherwise calculate and return value 
-		Val = GetValueRaw(Param)*(1.0/float(VEML_GainValsDG[VEML_GainIndexDG]))*(0.5/pow(2, VEML_GainVals[VEML_GainIndex]))*(1.0/float(VEML_IntTimes[VEML_IntIndex]))*float(1.0 + 3.0*VEML_SenseGain)*(1.0/IrradianceConversion[static_cast<int>(Param)]); //Normalize to base value and multiply by gain
+		Val = Val*(1.0/float(VEML_GainValsDG[VEML_GainIndexDG]))*(0.5/pow(2, VEML_GainVals[VEML_GainIndex]))*(1.0/float(VEML_IntTimes[VEML_IntIndex]))*float(1.0 + 2.0*VEML_SenseGain)*(1.0/IrradianceConversion[static_cast<int>(Param)]); //Normalize to base value and multiply by gain
 		return Val; //Return resultant value
 	}
 }
@@ -137,7 +137,7 @@ float VEML3328::GetLux()
 {
 	//FIX! Is this reasonable? 
 	// return -9999.0; //FIX!
-	return GetValueRaw(Channel::Green)*(1.0/float(VEML_GainValsDG[VEML_GainIndexDG]))*(0.5/pow(2, VEML_GainVals[VEML_GainIndex]))*(1.0/float(VEML_IntTimes[VEML_IntIndex]))*(float(LuxMax*(1.0 + 3.0*VEML_SenseGain))/65536.0); //Take green channel and scale by max lux
+	return GetValueRaw(Channel::Green)*(1.0/float(VEML_GainValsDG[VEML_GainIndexDG]))*(0.5/pow(2, VEML_GainVals[VEML_GainIndex]))*(1.0/float(VEML_IntTimes[VEML_IntIndex]))*(float(LuxMax*(1.0 + 2.0*VEML_SenseGain))/65536.0); //Take green channel and scale by max lux
 }
 
 float VEML3328::GetPAR(float CoefRed, float CoefGreen, float CoefBlue)
@@ -161,67 +161,99 @@ int VEML3328::AutoRange()
 	// WriteByte(ADR, Regs::EN, 0x03); //Enable sensor, turn on power, ADC
 	Shutdown(false);
 	SetSensetivity(1); //Set to low sensetivity by default, FIX??
+	// SetSensetivity(0); //Start at high sensetivity (normal)
 	// WriteByte(ADR, Regs::INT_TIME, VEML_IntTimes[0]); //Set default integration time (count = 1)
 	SetIntTime(0); //Set into to default
-	// WriteByte(ADR, Regs::GAIN, 0x00); //Set default gain (1x)
 	SetGain(0); //Set gain to lowest
-	delay(VEML_WaitTime[VEML_IntIndex]); //Wait for new data
+	SetGainDG(0); //Set DG gain to lowest
 	VEML_GainIndex = 0; //Reset gain/int vals
 	VEML_IntIndex = 0;
-
-	if(TestOverflow()) { //Within default range, no need for auto-range
-		VEML_GainIndex = 0;
-		VEML_IntIndex = 0;
+	VEML_GainIndexDG = 0;
+	// delay(VEML_WaitTime[VEML_IntIndex]); //Wait for new data
+	
+	unsigned int maxVal = 0; //Store the maximum count from the set of channels 
+	unsigned int subRange = 0; //Keep track of the maximum range possible within the gain subgroup
+	for(int i = 0; i < 5; i++) {
+		unsigned int val = GetValueRaw(static_cast<VEML3328::Channel>(i));
+		if(val > maxVal) maxVal = val; //If current reading greater than max, update max 
 	}
-
+	if(maxVal > maxRange/2) return 0; //If very high value, stick with max range
+	if(maxVal < maxRange/6) { //If the max val is less than 1/6th of the max, switch to high sensetivity
+		SetSensetivity(0); 
+		VEML_GainIndexDG = 2 - floor(maxVal/(maxRange/24)); //Find the largest DG gain which can safely be used
+		subRange = maxRange/(3*VEML_GainValsDG[VEML_GainIndexDG]); //Find max value for the sub range enforced by DG gain
+	}
 	else {
-		boolean InRange = false; //Used to keep track of range status
-		boolean OverflowState = true; //Used to track overflow state to prevent requirment to perform multiple reads
-
-		uint8_t PrevIntIndex = 0; //used to track the last set of gain/integration values used
-		uint8_t PrevGainIndex = 0;
-		unsigned long LocalTime = millis();
-		while(!InRange && (millis() - LocalTime) < 10000) { //Spend at most 10 seconds 
-
-
-		OverflowState = TestOverflow(); //Check for overflow single time
-
-		if(OverflowState) { //If overflowed, then use last set of values
-			VEML_IntIndex = PrevIntIndex;
-			VEML_GainIndex = PrevGainIndex;
-			InRange = true; //Break from loop
-		}
-		if(!OverflowState && VEML_IntIndex < 3) { //If not in range and int time is less than max
-			VEML_IntIndex += 1; //Incrment integration time, retry
-		}
-
-		if(!OverflowState && VEML_IntIndex >= 3 && VEML_GainIndex < 3) { //If no overflow, int at max, and gain not exceeded
-			VEML_IntIndex = 0; //Reset to minimum
-			VEML_GainIndex += 1; //Increment gain value
-		}
-
-		if(!OverflowState && VEML_IntIndex == 3 && VEML_GainIndex == 3) { //Max value
-			InRange = true; //Exit loop
-		}
-
-		PrevIntIndex = VEML_IntIndex; //Store values after incrementing
-		PrevGainIndex = VEML_GainIndex;
-		#if defined(WHITE_RABBIT_OBJECT)
-		Serial.print("Gain = ");
-		Serial.print(VEML_GainIndex);
-		Serial.print(" Int = ");
-		Serial.println(VEML_IntIndex);
-		Serial.print(" OVF = ");
-		Serial.println(OverflowState);
-		#endif
-		}
+		VEML_GainIndexDG = 0; //If greater than 1/6th of max, leave sensetivity low and use DG of 1
+		subRange = maxRange/(VEML_GainValsDG[VEML_GainIndexDG]); //Find max value for the sub range enforced by DG gain
 	}
-	#if defined(WHITE_RABBIT_OBJECT)
-	Serial.print("Gain Res = ");
-	Serial.print(VEML_GainIndex);
-	Serial.print(" Int Res = ");
-	Serial.println(VEML_IntIndex);
-	#endif
+	//Sort through sub group
+	VEML_IntIndex = 3 - floor(maxVal/(subRange/8)); //Find the largest integration time which will not saturate
+	unsigned int rowRange = subRange/(VEML_IntTimes[VEML_IntIndex]); //Find the maximum value of the row of the sub table
+	VEML_GainIndex = 3 - floor(maxVal/(rowRange/8));
+
+	SetIntTime(VEML_IntIndex); //Write values back
+	SetGain(VEML_GainIndex);
+	SetGainDG(VEML_GainIndexDG);
+	
+
+	// if(TestOverflow()) { //Exceeded at high sensetivity, reduce to low, start auto range
+	// 	SetSensetivity(1); //Switch to low sensetivity 
+	// }
+	
+	// if(TestOverflow()) { //Within default range, no need for auto-range
+	// 	VEML_GainIndex = 0;
+	// 	VEML_IntIndex = 0;
+	// }
+
+	// else {
+	// 	boolean InRange = false; //Used to keep track of range status
+	// 	boolean OverflowState = true; //Used to track overflow state to prevent requirment to perform multiple reads
+
+	// 	uint8_t PrevIntIndex = 0; //used to track the last set of gain/integration values used
+	// 	uint8_t PrevGainIndex = 0;
+	// 	unsigned long LocalTime = millis();
+	// 	while(!InRange && (millis() - LocalTime) < 10000) { //Spend at most 10 seconds 
+
+
+	// 	OverflowState = TestOverflow(); //Check for overflow single time
+
+	// 	if(OverflowState) { //If overflowed, then use last set of values
+	// 		VEML_IntIndex = PrevIntIndex;
+	// 		VEML_GainIndex = PrevGainIndex;
+	// 		InRange = true; //Break from loop
+	// 	}
+	// 	if(!OverflowState && VEML_IntIndex < 3) { //If not in range and int time is less than max
+	// 		VEML_IntIndex += 1; //Incrment integration time, retry
+	// 	}
+
+	// 	if(!OverflowState && VEML_IntIndex >= 3 && VEML_GainIndex < 3) { //If no overflow, int at max, and gain not exceeded
+	// 		VEML_IntIndex = 0; //Reset to minimum
+	// 		VEML_GainIndex += 1; //Increment gain value
+	// 	}
+
+	// 	if(!OverflowState && VEML_IntIndex == 3 && VEML_GainIndex == 3) { //Max value
+	// 		InRange = true; //Exit loop
+	// 	}
+
+	// 	PrevIntIndex = VEML_IntIndex; //Store values after incrementing
+	// 	PrevGainIndex = VEML_GainIndex;
+	// 	#if defined(WHITE_RABBIT_OBJECT)
+	// 	Serial.print("Gain = ");
+	// 	Serial.print(VEML_GainIndex);
+	// 	Serial.print(" Int = ");
+	// 	Serial.println(VEML_IntIndex);
+	// 	Serial.print(" OVF = ");
+	// 	Serial.println(OverflowState);
+	// 	#endif
+	// 	}
+	// }
+	// #if defined(WHITE_RABBIT_OBJECT)
+	// Serial.print("Gain Res = ");
+	// Serial.print(VEML_GainIndex);
+	// Serial.print(" Int Res = ");
+	// Serial.println(VEML_IntIndex);
+	// #endif
 	return 0; //FIX!
 
 	
@@ -244,7 +276,7 @@ bool VEML3328::TestOverflow()
 	// long MaxCount = OverflowCount >> 1; //Maximum count is half of overflow value, this is maximum desired range to utilize
 	long MaxCount = 32768; //DEBUG!
 	for(int i = 0; i < 4; i++) {
-	if(ReadWord(ADR, Regs::CLEAR + i) > MaxCount) return true; //If there is overflow on any channel, return fail
+		if(ReadWord(ADR, Regs::CLEAR + i) > MaxCount) return true; //If there is overflow on any channel, return fail
 	}
 	return false; //Otherwise return no overflow
 }
@@ -257,7 +289,12 @@ int VEML3328::SetSensetivity(bool State) //State = 1 -> low sensetivity, State =
 
 	if(!State) Val = Val & 0xFFBF; //Clear sensetivity bit
 	if(State) Val = Val | 0x0040; //Set sensetivity bit
-	return WriteWord(ADR, Regs::COMMAND, Val); //Write adjusted value back
+	int error = WriteWord(ADR, Regs::COMMAND, Val); //Write adjusted value back
+	if(error == 0) {
+		VEML_SenseGain = State; //Update global after write confirmed 
+		return 0; //Return passing result
+	}
+	else return error; //Otherwise return error code 
 }
 
 int VEML3328::Shutdown(bool State)
@@ -309,6 +346,26 @@ int VEML3328::SetIntTime(uint8_t IntVal) //Set integration time from 0 to 3 (ind
 		Serial.print(" CMD Read = 0x"); Serial.print(ValIn, HEX);
 		Serial.print(" CMD Out = 0x"); Serial.println(Val, HEX);   
 	#endif
+	return WriteWord(ADR, Regs::COMMAND, Val); //Write modiffied value back
+}
+
+int VEML3328::SetGainDG(uint8_t GainValDG) //Set DG gain val from 0 to 2 (index of gain value), coresponding to 1, 2, 4
+{
+	if(GainValDG > 2) return -2; //Indicate input error 
+	bool Error = 1; //Assume error
+	int ValIn = ReadWord(ADR, Regs::COMMAND, Error);
+	if(Error) return -1; //Indicate error to system
+
+	int Val = ValIn & 0xCFFF; //Clear gain bits
+	Val = Val | GainValDG << 12;
+
+	#if defined(WHITE_RABBIT_OBJECT)
+		// Serial.print("I2C Error = "); Serial.println(State);  
+		Serial.print("GAIN DG = "); Serial.print(GainValDG);
+		Serial.print(" CMD Read = 0x"); Serial.print(ValIn, HEX);
+		Serial.print(" CMD Out = 0x"); Serial.println(Val, HEX);   
+	#endif
+
 	return WriteWord(ADR, Regs::COMMAND, Val); //Write modiffied value back
 }
 

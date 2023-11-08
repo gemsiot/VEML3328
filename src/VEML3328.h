@@ -67,6 +67,7 @@ class VEML3328
 		int Shutdown(bool State);
 		int SetGain(uint8_t GainVal);
 		int SetIntTime(uint8_t IntVal);
+		int SetGainDG(uint8_t GainValDG);
 		int SetSensetivity(bool State);
 
 	private:
@@ -83,6 +84,7 @@ class VEML3328
 		uint8_t VEML_IntIndex = 0; //Use count = 1 by default
 		uint8_t VEML_GainIndexDG = 0; //Use 1x gain by default
 		uint8_t VEML_SenseGain = 0; //Default to high sensetivity 
+		// uint8_t VEML_GainValDG = 1; //Default to 1x
 		int VEML_IntTimes[4] = {1, 2, 4, 8}; //Register values for integration times (increasing)
 		int VEML_GainValsDG[3] = {1, 2, 4}; //Values for DG gain stage
 		//Cycles = 256 - VEML_IntTimes[i] = 1, 10, 37, 64, 256
@@ -91,6 +93,8 @@ class VEML3328
 		//Gain = 4^VEML_GainVals[i] = 1, 4, 16, 64
 		long VEML_WaitTime[4] = {750, 750, 750, 750}; //Wait times for each respective integration time [ms] //FIX!
 		float IrradianceConversion[5] = {14.25, 10.25, 9.75, 8.5, 6.25}; //counts per uW/cm^2 for Clear, Red, Green, Blue, IR at minimal gain and integration (factor of 4 div vs data sheet)
+		const unsigned long maxRange = 65536; //Max count for any reading
+		// bool VEML_Sensetivity = 0; //Keep track of sensitivity range used 
 };
 
 #endif
