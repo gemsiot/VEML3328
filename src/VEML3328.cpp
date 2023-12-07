@@ -1,3 +1,5 @@
+//© 2023 Regents of the University of Minnesota. All rights reserved.
+
 #include "VEML3328.h"
 
 VEML3328::VEML3328() 
